@@ -1,0 +1,50 @@
+[package]
+name = "deshred"
+version = "0.1.0"
+authors = ["Triton One"]
+edition = "2024"
+rust-version = "1.89"
+publish = false
+
+[dependencies]
+bytes = "1"
+crossbeam-channel = "0.5"
+fixedbitset = "0.5"
+log = "0.4"
+# simd-accel as in <https://github.com/anza-xyz/agave/blob/v4.2.0/ledger/Cargo.toml#L59>; needs a C compiler.
+reed-solomon-erasure = { version = "6", features = ["simd-accel"] }
+socket2 = { version = "0.5", features = ["all"] }
+solana-hash = { version = "4.6", features = ["wincode"] }
+solana-sha256-hasher = { version = "3", features = ["sha2"] }
+solana-transaction = { version = "4.3", features = ["wincode"] }
+thiserror = "2"
+wincode = { version = "0.6", features = ["derive"] }
+
+# cli
+clap = { version = "4", features = ["derive"], optional = true }
+ctrlc = { version = "3", optional = true }
+env_logger = { version = "0.11", optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+nix = { version = "0.31", features = ["socket", "uio", "net"] }
+
+[dev-dependencies]
+solana-message = "4.5"
+solana-signature = "3"
+
+[features]
+default = ["cli"]
+cli = ["dep:clap", "dep:ctrlc", "dep:env_logger"]
+
+[[bin]]
+name = "deshred"
+required-features = ["cli"]
+
+[lints.clippy]
+clone_on_ref_ptr = "deny"
+missing_const_for_fn = "deny"
+trivially_copy_pass_by_ref = "deny"
+
+[profile.release]
+lto = true
+codegen-units = 1
