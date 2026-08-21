@@ -24,6 +24,11 @@ pub fn leaf(bytes: &[u8]) -> Hash32 {
     hashv(&[LEAF_PREFIX, bytes]).to_bytes()
 }
 
+/// Same as [`leaf`] over `head` followed by `tail`, without concatenating.
+pub fn leaf_of_parts(head: &[u8], tail: &[u8]) -> Hash32 {
+    hashv(&[LEAF_PREFIX, head, tail]).to_bytes()
+}
+
 fn join(left: &[u8], right: &[u8]) -> Hash32 {
     hashv(&[
         NODE_PREFIX,

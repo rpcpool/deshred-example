@@ -11,8 +11,8 @@
 use crate::{
     merkle::{Hash32, Tree},
     shred::{
-        CODE_SHREDS_PER_FEC_SET, DATA_SHREDS_PER_FEC_SET, SIGNATURE_SIZE, Shred, ShredError,
-        ShredKind,
+        CODE_HEADERS_SIZE, CODE_SHREDS_PER_FEC_SET, DATA_SHREDS_PER_FEC_SET, SIGNATURE_SIZE, Shred,
+        ShredError, ShredKind,
     },
 };
 
@@ -167,6 +167,18 @@ impl FecSet {
         let slot = template.slot();
         let fec_set_index = template.fec_set_index();
         let version = template.version();
+        // Headers of the missing code shreds have to be rebuilt for their
+        // Merkle leaves (the leaf starts right after the signature). All code
+        // shreds of a set share everything but the index and position.
+        let code_template = self
+            .code
+            .iter()
+            .flatten()
+            .next()
+            .expect("can_recover implies a code shred");
+        let first_code_index = code_template.index()
+            - (code_template.erasure_shard_index() - DATA_SHREDS_PER_FEC_SET) as u32;
+        let code_variant = code_template.bytes()[SIGNATURE_SIZE];
 
         // Room for the chained root after each shard: the Merkle leaf covers
         // both, so appending it after reconstruction avoids a second copy.
@@ -186,11 +198,35 @@ impl FecSet {
         rs.reconstruct(&mut shards)?;
 
         // Both missing data and missing code shards are needed for the tree.
+        // A data shard already starts with its headers; a code shard starts
+        // after them, so the leaf needs the 25 header bytes in front.
         let leaves = shards
             .iter_mut()
-            .map(|(shard, _)| {
+            .enumerate()
+            .map(|(i, (shard, present))| {
                 shard.extend_from_slice(&chained_root);
-                crate::merkle::leaf(shard)
+                match i.checked_sub(DATA_SHREDS_PER_FEC_SET) {
+                    None => crate::merkle::leaf(shard),
+                    Some(_) if *present => self.code[i - DATA_SHREDS_PER_FEC_SET]
+                        .as_ref()
+                        .unwrap()
+                        .merkle_leaf(),
+                    Some(position) => {
+                        let mut header = [0u8; CODE_HEADERS_SIZE - SIGNATURE_SIZE];
+                        header[0] = code_variant;
+                        header[1..9].copy_from_slice(&slot.to_le_bytes());
+                        header[9..13]
+                            .copy_from_slice(&(first_code_index + position as u32).to_le_bytes());
+                        header[13..15].copy_from_slice(&version.to_le_bytes());
+                        header[15..19].copy_from_slice(&fec_set_index.to_le_bytes());
+                        header[19..21]
+                            .copy_from_slice(&(DATA_SHREDS_PER_FEC_SET as u16).to_le_bytes());
+                        header[21..23]
+                            .copy_from_slice(&(CODE_SHREDS_PER_FEC_SET as u16).to_le_bytes());
+                        header[23..25].copy_from_slice(&(position as u16).to_le_bytes());
+                        crate::merkle::leaf_of_parts(&header, shard)
+                    }
+                }
             })
             .collect();
         let tree = Tree::new(leaves);

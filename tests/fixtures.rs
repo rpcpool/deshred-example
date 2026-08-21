@@ -90,14 +90,19 @@ fn shuffle<T>(items: &mut [T], mut seed: u64) {
     }
 }
 
-/// Packets grouped by FEC set, in capture order.
+/// Packets grouped by FEC set, in capture order, without the duplicates a
+/// live capture contains (the same datagram can arrive on two paths).
 fn sets(packets: &[Vec<u8>]) -> Vec<Vec<Vec<u8>>> {
     let mut index: HashMap<(u64, u32), usize> = HashMap::new();
+    let mut seen: std::collections::HashSet<(u64, bool, u32)> = std::collections::HashSet::new();
     let mut sets: Vec<Vec<Vec<u8>>> = Vec::new();
     for p in packets {
         let Ok(shred) = Shred::parse(p.clone()) else {
             continue;
         };
+        if !seen.insert((shred.slot(), shred.is_data(), shred.index())) {
+            continue;
+        }
         let key = (shred.slot(), shred.fec_set_index());
         let i = *index.entry(key).or_insert_with(|| {
             sets.push(Vec::new());

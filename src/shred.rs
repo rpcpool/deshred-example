@@ -425,15 +425,11 @@ impl Shred {
             .then(|| &self.bytes[self.bytes.len() - SIGNATURE_SIZE..])
     }
 
-    /// Merkle leaf: everything between the leader signature (data) or the
-    /// headers (code) and the proof, which includes the chained root.
+    /// Merkle leaf: everything between the leader signature and the proof,
+    /// headers and chained root included, for data and code shreds alike.
     /// <https://github.com/anza-xyz/agave/blob/v4.2.0/ledger/src/shred/merkle.rs#L396>
     pub fn merkle_leaf(&self) -> Hash32 {
-        let start = match self.kind {
-            ShredKind::Data => SIGNATURE_SIZE,
-            ShredKind::Code => CODE_HEADERS_SIZE,
-        };
-        merkle::leaf(&self.bytes[start..self.proof_offset()])
+        merkle::leaf(&self.bytes[SIGNATURE_SIZE..self.proof_offset()])
     }
 
     /// Merkle root of the FEC set recomputed from this shred's own proof.
