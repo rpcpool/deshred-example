@@ -316,6 +316,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "deshred-minimal"
+version = "0.1.0"
+dependencies = [
+ "deshred",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -1,0 +1,12 @@
+[package]
+name = "deshred-minimal"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+publish = false
+
+[dependencies]
+# This example lives in the deshred repo, so it links the library by path.
+# In your own project, depend on it straight from GitHub instead:
+#   deshred = { git = "https://github.com/rpcpool/deshred-example", default-features = false }
+deshred = { path = "../..", default-features = false }

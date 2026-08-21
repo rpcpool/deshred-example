@@ -63,10 +63,10 @@ jobs:
         run: cargo +nightly fmt --all -- --check
 
       - name: cargo clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: cargo test
-        run: cargo test --all-features
+        run: cargo test --workspace --all-features
 
       - name: cargo build
-        run: RUSTFLAGS="-D warnings" cargo build --release --all-features
+        run: RUSTFLAGS="-D warnings" cargo build --workspace --release --all-features

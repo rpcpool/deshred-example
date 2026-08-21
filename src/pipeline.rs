@@ -67,7 +67,7 @@ pub type PacketTap = Box<dyn FnMut(&[u8]) + Send>;
 
 #[derive(Debug, Clone)]
 pub struct PipelineConfig {
-    /// Address to bind, e.g. `0.0.0.0:6767`. Shreds are sent to this port.
+    /// Address to bind, e.g. `0.0.0.0:20000`. Shreds are sent to this port.
     pub bind: SocketAddr,
     /// Kernel receive buffer size.
     pub recv_buffer_bytes: usize,

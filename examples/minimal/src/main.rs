@@ -1,13 +1,13 @@
 //! The smallest useful program: bind the port, print every transaction.
 //!
-//! cargo run --release --example minimal -- 0.0.0.0:6767
+//! cargo run --release -p deshred-minimal -- 0.0.0.0:20000
 
 use deshred::{EntryBatch, Pipeline, PipelineConfig};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bind = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "0.0.0.0:6767".into());
+        .unwrap_or_else(|| "0.0.0.0:20000".into());
     let config = PipelineConfig::new(bind.parse()?);
 
     let pipeline = Pipeline::spawn(config, |batch: EntryBatch| {

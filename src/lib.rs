@@ -20,7 +20,7 @@
 //! ```no_run
 //! use deshred::{Pipeline, PipelineConfig};
 //!
-//! let config = PipelineConfig::new("0.0.0.0:6767".parse().unwrap());
+//! let config = PipelineConfig::new("0.0.0.0:20000".parse().unwrap());
 //! let pipeline = Pipeline::spawn(config, |batch: deshred::EntryBatch| {
 //!     for entry in &batch.entries {
 //!         for tx in &entry.transactions {

@@ -27,7 +27,7 @@ enum Command {
     /// Bind a UDP port and print the transactions found in incoming shreds.
     Listen {
         /// Address and port the shreds are sent to.
-        #[arg(long, default_value = "0.0.0.0:6767")]
+        #[arg(long, default_value = "0.0.0.0:20000")]
         bind: SocketAddr,
         /// Drop shreds from other clusters. Leave unset to accept any.
         #[arg(long)]
