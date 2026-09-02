@@ -138,6 +138,22 @@ fn bench_stages(c: &mut Criterion) {
             entry::decode(&segments[i]).unwrap()
         })
     });
+
+    // The zero-copy scan of the same segments: boundaries plus one field read
+    // per transaction, no allocation.
+    let mut i = 0;
+    group.bench_function("view_segment", |b| {
+        b.iter(|| {
+            i = (i + 1) % segments.len();
+            let mut sig_bytes = 0u64;
+            for entry in deshred::view::entries(&segments[i]).unwrap() {
+                for tx in entry.unwrap().transactions() {
+                    sig_bytes += u64::from(tx.unwrap().signature()[0]);
+                }
+            }
+            sig_bytes
+        })
+    });
     group.finish();
 
     let mut group = c.benchmark_group("pipeline");
@@ -151,6 +167,27 @@ fn bench_stages(c: &mut Criterion) {
                 deshredder.push(packet.clone(), &mut out);
             }
             out
+        })
+    });
+
+    // Raw runs plus the zero-copy scan instead of the owned decode.
+    group.bench_function("end_to_end_views", |b| {
+        b.iter(|| {
+            let mut deshredder = Deshredder::new(Config::default());
+            let mut sig_bytes = 0u64;
+            for packet in &packets {
+                deshredder.push_raw(packet.clone(), &mut |raw: deshred::RawBatch| {
+                    let Ok(entries) = deshred::view::entries(&raw.bytes) else {
+                        return;
+                    };
+                    for entry in entries.flatten() {
+                        for tx in entry.transactions().flatten() {
+                            sig_bytes += u64::from(tx.signature()[0]);
+                        }
+                    }
+                });
+            }
+            sig_bytes
         })
     });
     group.finish();

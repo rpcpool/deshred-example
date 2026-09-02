@@ -35,6 +35,20 @@ impl Default for Config {
     }
 }
 
+/// One deshredded run of data shreds, not yet decoded. Feed the bytes to
+/// [`crate::view::entries`] for the zero-copy path or to
+/// [`crate::entry::decode`] for owned entries.
+#[derive(Debug, Clone)]
+pub struct RawBatch {
+    pub slot: u64,
+    /// Data shred indexes this batch was assembled from.
+    pub shreds: RangeInclusive<u32>,
+    /// The last shred of the batch carried `LAST_SHRED_IN_SLOT`.
+    pub last_in_slot: bool,
+    /// The concatenated shred payloads: one serialized block component.
+    pub bytes: Vec<u8>,
+}
+
 /// One deshredded `Vec<Entry>` with its position in the slot.
 #[derive(Debug, Clone)]
 pub struct EntryBatch {
@@ -81,9 +95,45 @@ impl Deshredder {
         &self.stats
     }
 
-    /// Process one datagram. Completed batches are appended to `out`; a
-    /// single packet can complete several (it may finish a pending FEC set).
+    /// Process one datagram. Completed batches are appended to `out` decoded;
+    /// a single packet can complete several (it may finish a pending FEC
+    /// set).
     pub fn push(&mut self, packet: impl Into<bytes::Bytes>, out: &mut Vec<EntryBatch>) {
+        let stats = Arc::clone(&self.stats);
+        self.push_raw(
+            packet,
+            &mut |raw: RawBatch| match entry::decode(&raw.bytes) {
+                Ok(BlockData::Entries(entries)) => {
+                    stats.entries.add(entries.len() as u64);
+                    stats
+                        .transactions
+                        .add(entries.iter().map(|e| e.transactions.len() as u64).sum());
+                    out.push(EntryBatch {
+                        slot: raw.slot,
+                        shreds: raw.shreds,
+                        last_in_slot: raw.last_in_slot,
+                        entries,
+                    });
+                }
+                Ok(BlockData::BlockMarker) => stats.block_markers.inc(),
+                Err(err) => {
+                    log::warn!(
+                        "slot {} shreds {:?}: cannot decode {} bytes: {err}",
+                        raw.slot,
+                        raw.shreds,
+                        raw.bytes.len()
+                    );
+                    stats.decode_errors.inc();
+                }
+            },
+        );
+    }
+
+    /// Like [`Deshredder::push`], but hands out the undecoded runs. The
+    /// zero-copy path: nothing beyond the run assembly is allocated, decode
+    /// however much you need with [`crate::view`]. Block markers (a run whose
+    /// bytes begin with eight zero bytes) are handed out too.
+    pub fn push_raw(&mut self, packet: impl Into<bytes::Bytes>, out: &mut impl FnMut(RawBatch)) {
         let Self {
             config,
             slots,
@@ -137,30 +187,13 @@ impl Deshredder {
         }
 
         for segment in segments.drain(..) {
-            match entry::decode(&segment.bytes) {
-                Ok(BlockData::Entries(entries)) => {
-                    stats.batches.inc();
-                    stats.entries.add(entries.len() as u64);
-                    stats
-                        .transactions
-                        .add(entries.iter().map(|e| e.transactions.len() as u64).sum());
-                    out.push(EntryBatch {
-                        slot,
-                        shreds: segment.shreds,
-                        last_in_slot: segment.last_in_slot,
-                        entries,
-                    });
-                }
-                Ok(BlockData::BlockMarker) => stats.block_markers.inc(),
-                Err(err) => {
-                    log::warn!(
-                        "slot {slot} shreds {:?}: cannot decode {} bytes: {err}",
-                        segment.shreds,
-                        segment.bytes.len()
-                    );
-                    stats.decode_errors.inc();
-                }
-            }
+            stats.batches.inc();
+            out(RawBatch {
+                slot,
+                shreds: segment.shreds,
+                last_in_slot: segment.last_in_slot,
+                bytes: segment.bytes,
+            });
         }
     }
 }

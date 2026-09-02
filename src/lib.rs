@@ -50,10 +50,11 @@ pub mod shred;
 pub mod slot;
 pub mod socket;
 pub mod stats;
+pub mod view;
 
 pub use {
     bytes::Bytes,
-    deshredder::{Config, Deshredder, EntryBatch},
+    deshredder::{Config, Deshredder, EntryBatch, RawBatch},
     entry::Entry,
     pipeline::{ChannelSink, EntrySink, Pipeline, PipelineConfig},
     shred::Shred,

@@ -141,9 +141,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
     print_distribution(
         "eager recovery saves (us waited for the last data shred)",
-        wait_us,
+        wait_us.clone(),
     );
     print_distribution("data shreds reconstructed when eager", missing);
     print_distribution("whole set arrival span (us)", span_us);
+
+    // Policy sweep: recover only after the set has been recoverable for a
+    // grace period without completing. Skipping a recovery saves its CPU
+    // cost; every set that still needs one is delivered `grace` later than
+    // the eager policy would have.
+    println!();
+    println!("grace_us | recoveries skipped | still recovered | added latency to those");
+    for grace in [0u64, 25, 50, 100, 250, 500, 1000] {
+        let skipped = wait_us.iter().filter(|&&w| w <= grace).count();
+        println!(
+            "{grace:>8} | {:>10} ({:>5.1}%) | {:>15} | {grace} us",
+            skipped,
+            skipped as f64 * 100.0 / wait_us.len() as f64,
+            wait_us.len() - skipped,
+        );
+    }
     Ok(())
 }
