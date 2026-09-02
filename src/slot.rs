@@ -56,7 +56,7 @@ impl SlotState {
     pub fn insert(
         &mut self,
         shred: Shred,
-        rs: &ReedSolomon,
+        rs: Option<&ReedSolomon>,
         stats: &Stats,
         out: &mut Vec<Segment>,
     ) {
@@ -97,7 +97,9 @@ impl SlotState {
             fresh[num_fresh] = index;
             num_fresh += 1;
         }
-        if set.can_recover() {
+        if let Some(rs) = rs
+            && set.can_recover()
+        {
             match set.recover(rs) {
                 Ok(indexes) => {
                     stats.recovered.add(indexes.len() as u64);

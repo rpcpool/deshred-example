@@ -53,6 +53,7 @@ fn deshredder(shred_version: u16) -> Deshredder {
     Deshredder::new(Config {
         shred_version: Some(shred_version),
         slot_lookback: LOOKBACK,
+        ..Config::default()
     })
 }
 

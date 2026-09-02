@@ -7,9 +7,14 @@
 
 use {
     clap::Parser,
-    deshred::{Shred, fixture, shred::DATA_SHREDS_PER_FEC_SET},
+    deshred::{Config, Deshredder, EntryBatch, Shred, fixture, shred::DATA_SHREDS_PER_FEC_SET},
     std::{collections::HashMap, path::PathBuf},
 };
+
+/// Measured reconstruction cost on the reference machine (`cargo bench`,
+/// `fec_recover_16d_16c`). Charged to every batch the eager policy emitted
+/// from a push that ran a recovery.
+const RECOVERY_COST_US: u64 = 46;
 
 #[derive(Parser)]
 #[command(about = "Measure what eager FEC recovery saves on a recorded capture")]
@@ -146,6 +151,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     print_distribution("data shreds reconstructed when eager", missing);
     print_distribution("whole set arrival span (us)", span_us);
 
+    transaction_latency(&cli)?;
+
     // Policy sweep: recover only after the set has been recoverable for a
     // grace period without completing. Skipping a recovery saves its CPU
     // cost; every set that still needs one is delivered `grace` later than
@@ -161,5 +168,80 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             wait_us.len() - skipped,
         );
     }
+    Ok(())
+}
+
+/// When did each batch's transactions become available under a policy?
+/// Batches are keyed by their shred range, which does not depend on the
+/// policy. The timestamp is the receive time of the packet whose processing
+/// emitted the batch, plus the reconstruction cost when that packet
+/// triggered a recovery.
+fn batch_times(
+    file: &PathBuf,
+    recover: bool,
+) -> Result<HashMap<(u64, u32), (u64, u64)>, Box<dyn std::error::Error>> {
+    let mut deshredder = Deshredder::new(Config {
+        recover,
+        ..Config::default()
+    });
+    let mut times = HashMap::new();
+    let mut out: Vec<EntryBatch> = Vec::new();
+    let mut recoveries = 0;
+    for record in fixture::Reader::open(file)? {
+        let record = record?;
+        deshredder.push(record.packet, &mut out);
+        let recovered = deshredder.stats().snapshot().recovered;
+        let cost = if recovered > recoveries {
+            RECOVERY_COST_US * 1_000
+        } else {
+            0
+        };
+        recoveries = recovered;
+        for batch in out.drain(..) {
+            times.insert(
+                (batch.slot, *batch.shreds.start()),
+                (record.unix_nanos + cost, batch.num_transactions() as u64),
+            );
+        }
+    }
+    Ok(times)
+}
+
+fn transaction_latency(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
+    let eager = batch_times(&cli.file, true)?;
+    let waiting = batch_times(&cli.file, false)?;
+
+    let mut deltas = Vec::new();
+    let mut ties = 0u64;
+    let mut only_with_recovery = 0u64;
+    let mut total = 0u64;
+    for (key, &(eager_at, txs)) in &eager {
+        total += txs;
+        match waiting.get(key) {
+            Some(&(waiting_at, _)) => {
+                let delta = waiting_at.saturating_sub(eager_at) / 1_000;
+                if delta == 0 {
+                    ties += txs;
+                } else {
+                    deltas.extend(std::iter::repeat_n(delta, txs as usize));
+                }
+            }
+            None => only_with_recovery += txs,
+        }
+    }
+
+    println!();
+    println!("transaction latency, eager recovery vs waiting for the data shreds:");
+    println!(
+        "  {total} transactions | unaffected {ties} ({:.1}%) | faster with recovery {} ({:.1}%) | only delivered thanks to recovery {only_with_recovery} ({:.1}%)",
+        ties as f64 * 100.0 / total as f64,
+        deltas.len(),
+        deltas.len() as f64 * 100.0 / total as f64,
+        only_with_recovery as f64 * 100.0 / total as f64,
+    );
+    print_distribution(
+        "  us earlier per accelerated transaction (46us recovery cost included)",
+        deltas,
+    );
     Ok(())
 }

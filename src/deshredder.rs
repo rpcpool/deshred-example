@@ -24,6 +24,11 @@ pub struct Config {
     /// state freed. Shreds for one slot arrive over ~400ms, so anything past
     /// a few dozen slots is never going to complete.
     pub slot_lookback: u64,
+    /// Rebuild missing data shreds from code shreds as soon as a set has 32.
+    /// Costs ~46us of reconstruction when it fires; `analyze-recovery` on a
+    /// capture shows what it buys. Without it a run only completes when all
+    /// of its data shreds arrive.
+    pub recover: bool,
 }
 
 impl Default for Config {
@@ -31,6 +36,7 @@ impl Default for Config {
         Self {
             shred_version: None,
             slot_lookback: 64,
+            recover: true,
         }
     }
 }
@@ -166,7 +172,7 @@ impl Deshredder {
         slots
             .entry(slot)
             .or_default()
-            .insert(shred, rs, stats, segments);
+            .insert(shred, config.recover.then_some(rs), stats, segments);
 
         if !segments.is_empty() && slot > *highest_slot {
             // Only a slot that produced a complete run moves the window. A
