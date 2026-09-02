@@ -2,17 +2,20 @@
 //!
 //! Any 32 of the 64 shreds are enough to rebuild the data shreds, so a set can
 //! be completed before every data shred has arrived. Recovery follows
-//! <https://github.com/anza-xyz/agave/blob/v4.2.0/ledger/src/shred/merkle.rs#L669>:
-//! reconstruct the erasure shards, rebuild the Merkle tree over all 64
-//! shards, and accept the result only if the root matches the one the
-//! received shreds carry (the root is what the leader signed, so a mismatch
-//! means corrupted or foreign shreds).
+//! <https://github.com/anza-xyz/agave/blob/v4.2.0/ledger/src/shred/merkle.rs#L669>
+//! with one deliberate difference: agave rebuilds the Merkle tree over the
+//! recovered set, both to double check the reconstruction and to attach
+//! proofs to the recovered shreds, which it retransmits. Here every shard fed
+//! into the reconstruction already had its own proof verified against the
+//! set's signed root on insert, nothing is retransmitted, and recovered
+//! shreds are only read for their data and flags, so the tree rebuild is
+//! skipped and recovered shreds carry zeroed proof bytes.
 
 use crate::{
-    merkle::{Hash32, Tree},
+    merkle::Hash32,
     shred::{
-        CODE_HEADERS_SIZE, CODE_SHREDS_PER_FEC_SET, DATA_SHREDS_PER_FEC_SET, SIGNATURE_SIZE, Shred,
-        ShredError, ShredKind,
+        CODE_SHREDS_PER_FEC_SET, DATA_SHREDS_PER_FEC_SET, SIGNATURE_SIZE, Shred, ShredError,
+        ShredKind,
     },
 };
 
@@ -45,8 +48,6 @@ pub enum Reject {
 pub enum RecoverError {
     #[error("reed-solomon: {0}")]
     ReedSolomon(#[from] reed_solomon_erasure::Error),
-    #[error("recovered set does not match the signed merkle root")]
-    MerkleRootMismatch,
     #[error("recovered shred is malformed: {0}")]
     InvalidShred(#[from] ShredError),
     #[error("recovered shred {index} has the wrong headers")]
@@ -167,72 +168,19 @@ impl FecSet {
         let slot = template.slot();
         let fec_set_index = template.fec_set_index();
         let version = template.version();
-        // Headers of the missing code shreds have to be rebuilt for their
-        // Merkle leaves (the leaf starts right after the signature). All code
-        // shreds of a set share everything but the index and position.
-        let code_template = self
-            .code
-            .iter()
-            .flatten()
-            .next()
-            .expect("can_recover implies a code shred");
-        let first_code_index = code_template.index()
-            - (code_template.erasure_shard_index() - DATA_SHREDS_PER_FEC_SET) as u32;
-        let code_variant = code_template.bytes()[SIGNATURE_SIZE];
 
-        // Room for the chained root after each shard: the Merkle leaf covers
-        // both, so appending it after reconstruction avoids a second copy.
         let mut shards: Vec<(Vec<u8>, bool)> = self
             .data
             .iter()
             .chain(self.code.iter())
-            .map(|shred| {
-                let mut shard = Vec::with_capacity(shard_len + chained_root.len());
-                match shred {
-                    Some(shred) => shard.extend_from_slice(shred.erasure_shard()),
-                    None => shard.resize(shard_len, 0),
-                }
-                (shard, shred.is_some())
+            .map(|shred| match shred {
+                Some(shred) => (shred.erasure_shard().to_vec(), true),
+                None => (vec![0u8; shard_len], false),
             })
             .collect();
-        rs.reconstruct(&mut shards)?;
-
-        // Both missing data and missing code shards are needed for the tree.
-        // A data shard already starts with its headers; a code shard starts
-        // after them, so the leaf needs the 25 header bytes in front.
-        let leaves = shards
-            .iter_mut()
-            .enumerate()
-            .map(|(i, (shard, present))| {
-                shard.extend_from_slice(&chained_root);
-                match i.checked_sub(DATA_SHREDS_PER_FEC_SET) {
-                    None => crate::merkle::leaf(shard),
-                    Some(_) if *present => self.code[i - DATA_SHREDS_PER_FEC_SET]
-                        .as_ref()
-                        .unwrap()
-                        .merkle_leaf(),
-                    Some(position) => {
-                        let mut header = [0u8; CODE_HEADERS_SIZE - SIGNATURE_SIZE];
-                        header[0] = code_variant;
-                        header[1..9].copy_from_slice(&slot.to_le_bytes());
-                        header[9..13]
-                            .copy_from_slice(&(first_code_index + position as u32).to_le_bytes());
-                        header[13..15].copy_from_slice(&version.to_le_bytes());
-                        header[15..19].copy_from_slice(&fec_set_index.to_le_bytes());
-                        header[19..21]
-                            .copy_from_slice(&(DATA_SHREDS_PER_FEC_SET as u16).to_le_bytes());
-                        header[21..23]
-                            .copy_from_slice(&(CODE_SHREDS_PER_FEC_SET as u16).to_le_bytes());
-                        header[23..25].copy_from_slice(&(position as u16).to_le_bytes());
-                        crate::merkle::leaf_of_parts(&header, shard)
-                    }
-                }
-            })
-            .collect();
-        let tree = Tree::new(leaves);
-        if Some(tree.root()) != self.root {
-            return Err(RecoverError::MerkleRootMismatch);
-        }
+        // Only the data shards; reconstructing the missing parity would be
+        // wasted work, nothing reads it.
+        rs.reconstruct_data(&mut shards)?;
 
         let mut recovered = Vec::new();
         for (position, (shard, present)) in shards.iter().take(DATA_SHREDS_PER_FEC_SET).enumerate()
@@ -241,15 +189,15 @@ impl FecSet {
                 continue;
             }
             // Same layout as a received data shred: the shard already holds
-            // every header after the signature, and the chained root after it.
-            let mut bytes = Vec::with_capacity(crate::shred::DATA_SHRED_SIZE);
-            bytes.extend_from_slice(&self.signature);
-            bytes.extend_from_slice(shard);
-            for entry in tree.proof(position) {
-                bytes.extend_from_slice(&entry);
-            }
+            // every header after the signature. The proof bytes stay zero.
+            let mut bytes = vec![0u8; crate::shred::DATA_SHRED_SIZE];
+            bytes[..SIGNATURE_SIZE].copy_from_slice(&self.signature);
+            bytes[SIGNATURE_SIZE..SIGNATURE_SIZE + shard.len()].copy_from_slice(shard);
+            bytes[SIGNATURE_SIZE + shard.len()..SIGNATURE_SIZE + shard.len() + chained_root.len()]
+                .copy_from_slice(&chained_root);
             if let Some(sig) = &retransmitter_signature {
-                bytes.extend_from_slice(sig);
+                let end = bytes.len();
+                bytes[end - SIGNATURE_SIZE..].copy_from_slice(sig);
             }
             let shred = Shred::parse(bytes::Bytes::from(bytes))?;
             let index = fec_set_index + position as u32;

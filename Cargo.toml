@@ -32,8 +32,13 @@ env_logger = { version = "0.11", optional = true }
 nix = { version = "0.31", features = ["socket", "uio", "net"] }
 
 [dev-dependencies]
+criterion = "0.5"
 solana-message = "4.5"
 solana-signature = "3"
+
+[[bench]]
+name = "stages"
+harness = false
 
 [features]
 default = ["cli"]
@@ -41,6 +46,10 @@ cli = ["dep:clap", "dep:ctrlc", "dep:env_logger"]
 
 [[bin]]
 name = "deshred"
+required-features = ["cli"]
+
+[[bin]]
+name = "analyze-recovery"
 required-features = ["cli"]
 
 [lints.clippy]
