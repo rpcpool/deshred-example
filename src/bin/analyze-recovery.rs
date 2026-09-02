@@ -171,15 +171,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Batch availability time (nanos) and transaction count, keyed by slot and
+/// first shred index.
+type BatchTimes = HashMap<(u64, u32), (u64, u64)>;
+
 /// When did each batch's transactions become available under a policy?
 /// Batches are keyed by their shred range, which does not depend on the
 /// policy. The timestamp is the receive time of the packet whose processing
 /// emitted the batch, plus the reconstruction cost when that packet
 /// triggered a recovery.
-fn batch_times(
-    file: &PathBuf,
-    recover: bool,
-) -> Result<HashMap<(u64, u32), (u64, u64)>, Box<dyn std::error::Error>> {
+fn batch_times(file: &PathBuf, recover: bool) -> Result<BatchTimes, Box<dyn std::error::Error>> {
     let mut deshredder = Deshredder::new(Config {
         recover,
         ..Config::default()
